@@ -1,17 +1,21 @@
 use auth_server::{
-    is_valid_credentials, AuthCode, Client, Credentials, IntrospectResponse, LoginForm,
-    LoginQueryParams, OauthTokenParams, Profile, Token, TokenParams, TokenResponse, TokenStatus,
-    User, MUTABLE_STORAGE,
+    is_valid_credentials, Credentials, IntrospectResponse, LoginForm, LoginQueryParams,
+    OauthTokenParams, TokenParams, TokenResponse, TokenStatus,
 };
 use chrono::{DateTime, Duration, Utc};
 use url::Url;
+mod storage;
+use storage::{AuthCode, Client, Profile, Storage, Token, User};
 
 use actix_web::{
-    get, http::header::ContentType, post, web, App, HttpResponse, HttpServer, Responder,
+    error::{ErrorBadRequest, ErrorInternalServerError},
+    get,
+    http::header::ContentType,
+    post, web, App, HttpResponse, HttpServer,
 };
 
 #[get("/authorize")]
-async fn login(query: web::Query<LoginQueryParams>) -> impl Responder {
+async fn login(query: web::Query<LoginQueryParams>) -> Result<HttpResponse, actix_web::Error> {
     let LoginQueryParams {
         client_id,
         redirect_uri,
@@ -19,15 +23,11 @@ async fn login(query: web::Query<LoginQueryParams>) -> impl Responder {
         scope,
     } = query.into_inner();
 
-    let client = MUTABLE_STORAGE
-        .lock()
-        .unwrap()
-        .clients
-        .get(&client_id[..])
-        .cloned();
+    let storage = Storage::get().map_err(|e| ErrorInternalServerError(e))?;
+    let client = storage.clients.get(&client_id);
 
     match client {
-        Some(cl) => HttpResponse::Ok()
+        Some(cl) => Ok(HttpResponse::Ok()
             .content_type(ContentType::html())
             .body(format!(
                 "<h2>{} is requesting access to:</h2>
@@ -41,24 +41,24 @@ async fn login(query: web::Query<LoginQueryParams>) -> impl Responder {
                     <button type=\"submit\">Authorize</button>
             </form>",
                 cl.name, client_id, redirect_uri, response_type, scope
-            )),
-        None => HttpResponse::BadRequest().body("Invalid client"),
+            ))),
+        None => Ok(HttpResponse::BadRequest().body("Invalid client")),
     }
 }
 
 #[post("/authorize")]
-async fn login_post(form: web::Form<LoginForm>) -> impl Responder {
+async fn login_post(form: web::Form<LoginForm>) -> Result<HttpResponse, actix_web::Error> {
     let form = form.into_inner();
     let creds = Credentials {
         client_id: form.client_id.clone(),
         client_secret: None,
     };
-    let is_valid = is_valid_credentials(&creds);
+    let is_valid = is_valid_credentials(&creds).map_err(|e| ErrorBadRequest(e))?;
     if !is_valid {
-        return HttpResponse::Unauthorized().body("Invalid credentials");
+        return Ok(HttpResponse::Unauthorized().body("Invalid credentials"));
     }
 
-    let mut storage = MUTABLE_STORAGE.lock().unwrap();
+    let mut storage = Storage::get().map_err(|e| ErrorInternalServerError(e))?;
     let user = storage
         .users
         .values()
@@ -67,8 +67,7 @@ async fn login_post(form: web::Form<LoginForm>) -> impl Responder {
     match user {
         Some(_) => {
             let auth_code = String::from("123");
-            let mut user_id = String::new();
-            user_id.push_str("user1");
+            let user_id = "user1".to_string();
             let now: DateTime<Utc> = Utc::now();
             let expires = now + Duration::minutes(10);
 
@@ -81,41 +80,50 @@ async fn login_post(form: web::Form<LoginForm>) -> impl Responder {
             };
             storage.auth_codes.insert(auth_code.clone(), auth_code_data);
 
-            let redirect_url = Url::parse(&form.redirect_uri);
-            let mut redirect_url = redirect_url.clone().unwrap();
+            let mut redirect_url =
+                Url::parse(&form.redirect_uri).map_err(|err| ErrorInternalServerError(err))?;
 
             redirect_url
                 .query_pairs_mut()
                 .append_pair("auth_code", &auth_code);
 
-            HttpResponse::Found()
+            Ok(HttpResponse::Found()
                 .append_header(("Location", redirect_url.to_string()))
-                .finish()
+                .finish())
         }
-        None => return HttpResponse::Unauthorized().body("Invalid credentials"),
+        None => return Ok(HttpResponse::Unauthorized().body("Invalid credentials")),
     }
 }
 
 #[post("/token")]
-async fn oauth_token(params: web::Json<OauthTokenParams>) -> impl Responder {
+async fn oauth_token(
+    params: web::Json<OauthTokenParams>,
+) -> Result<HttpResponse, actix_web::Error> {
     let params = params.into_inner();
 
     if params.grant_type != "authorization_code" {
-        return HttpResponse::BadRequest().body("Unsupported grant type");
+        return Ok(HttpResponse::BadRequest().body("Unsupported grant type"));
     }
 
-    let mut storage = MUTABLE_STORAGE.lock().unwrap();
+    let mut storage = Storage::get().map_err(|e| ErrorInternalServerError(e))?;
 
-    let auth_code = match storage.auth_codes.get(&params.auth_code[..]).cloned() {
+    let is_valid = is_valid_credentials(&Credentials {
+        client_id: params.client_id,
+        client_secret: Some(params.client_secret),
+    })
+    .map_err(|e| ErrorBadRequest(e))?;
+    if !is_valid {
+        return Ok(HttpResponse::Unauthorized().body("Invalid credentials"));
+    }
+
+    let auth_code = match storage.auth_codes.get(&params.auth_code).cloned() {
         Some(ac) => ac, // Clone the data we need
-        None => {
-            return HttpResponse::BadRequest().json("Invalid auth code");
-        }
+        None => return Ok(HttpResponse::BadRequest().json("Invalid auth code")),
     };
 
     let now = Utc::now();
     if auth_code.expires < now || auth_code.redirect_uri != params.redirect_uri {
-        return HttpResponse::Unauthorized().body("Invalid grant");
+        return Ok(HttpResponse::Unauthorized().body("Invalid grant"));
     }
 
     let expires = now + Duration::minutes(10);
@@ -138,23 +146,23 @@ async fn oauth_token(params: web::Json<OauthTokenParams>) -> impl Responder {
         is_revoked: false,
     };
 
-    HttpResponse::Ok().json(response)
+    Ok(HttpResponse::Ok().json(response))
 }
 
 #[post("/revoke")]
-async fn revoke(params: web::Json<TokenParams>) -> impl Responder {
-    let mut storage = MUTABLE_STORAGE.lock().unwrap();
+async fn revoke(params: web::Json<TokenParams>) -> Result<HttpResponse, actix_web::Error> {
+    let mut storage = Storage::get().map_err(|e| ErrorInternalServerError(e))?;
 
     if let Some(token) = storage.tokens.get_mut(&params.access_token) {
         token.is_revoked = true;
-        return HttpResponse::Ok().body("Revoked");
+        return Ok(HttpResponse::Ok().body("Revoked"));
     }
-    HttpResponse::BadRequest().body("Invalid token")
+    Ok(HttpResponse::BadRequest().body("Invalid token"))
 }
 
 #[post("/introspect")]
-async fn introspect(params: web::Json<TokenParams>) -> impl Responder {
-    let storage = MUTABLE_STORAGE.lock().unwrap();
+async fn introspect(params: web::Json<TokenParams>) -> Result<HttpResponse, actix_web::Error> {
+    let storage = Storage::get().map_err(|e| ErrorInternalServerError(e))?;
 
     if let Some(token) = storage.tokens.get(&params.access_token) {
         let mut response = IntrospectResponse {
@@ -170,38 +178,45 @@ async fn introspect(params: web::Json<TokenParams>) -> impl Responder {
         } else if token.expires < now {
             response.status = TokenStatus::Expired;
         }
-        return HttpResponse::Ok().json(response);
+        return Ok(HttpResponse::Ok().json(response));
     };
 
-    HttpResponse::BadRequest().body("Invalid token")
+    Ok(HttpResponse::BadRequest().body("Invalid token"))
 }
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), std::io::Error> {
     let app_port = 4000;
     println!("Listening on port {}", app_port);
 
-    MUTABLE_STORAGE.lock().unwrap().clients.insert(
-        String::from("client1"),
-        Client {
-            client_secret: String::from("client1_secret"),
-            redirect_uris: vec![String::from("http://localhost:3000/callback")],
-            name: String::from("Client App"),
-            allowed_scopes: vec![String::from("email"), String::from("photos")],
-        },
-    );
+    let storage = Storage::get();
+    match storage {
+        Ok(mut strg) => {
+            strg.clients.insert(
+                String::from("client1"),
+                Client {
+                    client_secret: String::from("client1_secret"),
+                    redirect_uris: vec![String::from("http://localhost:3000/callback")],
+                    name: String::from("Client App"),
+                    allowed_scopes: vec![String::from("email"), String::from("photos")],
+                },
+            );
 
-    MUTABLE_STORAGE.lock().unwrap().users.insert(
-        String::from("user1"),
-        User {
-            username: String::from("username"),
-            password: String::from("password"),
-            profile: Profile {
-                name: String::from("Khotam"),
-                email: String::from("test@gmail.com"),
-            },
-        },
-    );
+            strg.users.insert(
+                String::from("user1"),
+                User {
+                    username: String::from("username"),
+                    password: String::from("password"),
+                    profile: Profile {
+                        name: String::from("Khotam"),
+                        email: String::from("test@gmail.com"),
+                    },
+                },
+            );
+            ()
+        }
+        _ => (),
+    }
 
     HttpServer::new(|| {
         App::new()
