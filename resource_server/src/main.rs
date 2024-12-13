@@ -1,58 +1,54 @@
-use actix_web::{post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    error::ErrorBadRequest, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder,
+};
 use resource_server::{TokenResponse, TokenStatus};
 
-async fn validate_token(token: &String) -> bool {
+async fn validate_token(token: &str) -> Result<bool, String> {
     let client = reqwest::Client::new();
-    let response = match client
+    let response = client
         .post("http://localhost:4000/introspect")
         .json(&serde_json::json!({
           "access_token": token,
         }))
         .send()
         .await
-    {
-        Ok(resp) => resp,
-        Err(e) => {
-            println!("Request failed: {}", e);
-            return false;
-        }
-    };
+        .map_err(|err| format!("Error in request /introspect: {}", err))?;
 
-    let token: TokenResponse = match response.json().await {
-        Ok(t) => t,
-        Err(e) => {
-            println!("Failed to parse response: {}", e);
-            return false;
-        }
-    };
+    let token: TokenResponse = response
+        .json()
+        .await
+        .map_err(|err| format!("Error parsing json /introspect: {}", err))?;
+
     if token.status == TokenStatus::Active {
-        return true;
+        return Ok(true);
     }
 
-    return false;
+    return Ok(false);
 }
 
 #[post("/resource")]
-async fn resource(req: HttpRequest) -> impl Responder {
+async fn resource(req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
     let token = req
         .headers()
         .get("Authorization")
         .and_then(|h| h.to_str().ok())
         .map(|h| h.replace("Bearer ", ""));
 
-    match token {
-        Some(t) => {
-            let is_valid = validate_token(&t).await;
-            if is_valid {
-                return HttpResponse::Ok().json(web::Json(serde_json::json!({
-                    "ok": true,
-                })));
-            }
-
-            return HttpResponse::Unauthorized().body("invalid token");
-        }
-        None => HttpResponse::Unauthorized().body("invalid token"),
+    if token.is_none() {
+        return Ok(HttpResponse::Unauthorized().body("invalid token"));
     }
+
+    let is_valid = validate_token(&token.unwrap())
+        .await
+        .map_err(|err| ErrorBadRequest(err))?;
+
+    if !is_valid {
+        return Ok(HttpResponse::Unauthorized().body("invalid token"));
+    }
+
+    return Ok(HttpResponse::Ok().json(web::Json(serde_json::json!({
+        "ok": true,
+    }))));
 }
 
 #[actix_web::main]
