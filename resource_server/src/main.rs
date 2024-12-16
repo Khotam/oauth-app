@@ -1,6 +1,6 @@
 use actix_web::{error::ErrorBadRequest, post, web, App, HttpRequest, HttpResponse, HttpServer};
+use app_core::auth_utils::{IntrospectResponse, TokenStatus};
 use reqwest::header::AUTHORIZATION;
-use resource_server::{TokenResponse, TokenStatus};
 mod sd_jwt;
 
 async fn validate_token(token: &str) -> Result<bool, String> {
@@ -15,11 +15,10 @@ async fn validate_token(token: &str) -> Result<bool, String> {
         .await
         .map_err(|err| format!("Error in request /introspect: {}", err))?;
     dbg!(&response);
-    let token: TokenResponse = response
+    let token: IntrospectResponse = response
         .json()
         .await
         .map_err(|err| format!("Error parsing json /introspect: {}", err))?;
-    dbg!(&token);
 
     if token.status == TokenStatus::Active {
         return Ok(true);

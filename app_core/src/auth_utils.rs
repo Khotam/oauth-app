@@ -1,6 +1,5 @@
+use super::storage::Storage;
 use serde::{Deserialize, Serialize};
-use storage::Storage;
-mod storage;
 
 #[derive(Deserialize)]
 pub struct LoginQueryParams {
@@ -34,7 +33,7 @@ pub struct TokenParams {
     pub access_token: String,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, PartialEq)]
 pub enum TokenStatus {
     Active,
     Expired,

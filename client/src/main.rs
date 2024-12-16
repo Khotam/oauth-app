@@ -1,5 +1,5 @@
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
-use client::{CallbackQueryParams, TokenResponse, CONFIG};
+use app_core::client_utils::{CallbackQueryParams, TokenResponse, CONFIG};
 use reqwest::header::AUTHORIZATION;
 
 use serde_json;

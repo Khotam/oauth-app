@@ -1,17 +1,8 @@
-use auth_server::{
-    is_valid_credentials, Credentials, IntrospectResponse, LoginForm, LoginQueryParams,
-    OauthTokenParams, TokenParams, TokenResponse, TokenStatus,
-};
 use chrono::{DateTime, Duration, Utc};
 use url::Url;
-mod storage;
-use jsonwebtoken::{encode, EncodingKey, Header};
-use storage::{AuthCode, Storage, Token};
-mod jwt;
-use jwt::{Claims, JwtConfig};
 
-mod auth;
-use auth::AuthMiddleware;
+mod auth_middleware;
+use auth_middleware::AuthMiddleware;
 
 use std::future::ready;
 
@@ -21,6 +12,13 @@ use actix_web::{
     http::header::ContentType,
     post, web, HttpResponse,
 };
+
+use app_core::auth_utils::{
+    is_valid_credentials, Credentials, IntrospectResponse, LoginForm, LoginQueryParams,
+    OauthTokenParams, TokenParams, TokenResponse, TokenStatus,
+};
+use app_core::jwt::{Claims, Jwt};
+use app_core::storage::{AuthCode, Storage, Token};
 
 #[get("/authorize")]
 async fn login(query: web::Query<LoginQueryParams>) -> Result<HttpResponse, actix_web::Error> {
@@ -101,7 +99,6 @@ async fn login_post(form: web::Form<LoginForm>) -> Result<HttpResponse, actix_we
 #[post("/token")]
 async fn oauth_token(
     params: web::Json<OauthTokenParams>,
-    config: web::Data<JwtConfig>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let params = params.into_inner();
 
@@ -137,12 +134,8 @@ async fn oauth_token(
         iat: now.timestamp(),
     };
 
-    let access_token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(config.secret.as_bytes()),
-    )
-    .map_err(|_| ErrorUnauthorized("Token creation failed"))?;
+    let access_token =
+        Jwt::encode(&claims).map_err(|_| ErrorUnauthorized("Token creation failed"))?;
 
     let token_data = Token {
         client_id: auth_code.client_id.clone(),
@@ -203,7 +196,7 @@ async fn main() -> std::io::Result<()> {
     let app_port = 4000;
     println!("Listening on port {}", app_port);
 
-    let config = JwtConfig::from_env();
+    let config = Jwt::from_env();
     let config = web::Data::new(config);
 
     HttpServer::new(move || {
@@ -215,13 +208,7 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("")
                     .wrap(actix_web_httpauth::middleware::HttpAuthentication::bearer(
-                        {
-                            let value = config.clone();
-                            move |req, _| {
-                                let config = value.clone();
-                                ready(AuthMiddleware::validate_token(req, &config.secret))
-                            }
-                        },
+                        move |req, _| ready(AuthMiddleware::validate_token(req)),
                     ))
                     .service(introspect)
                     .service(revoke),
