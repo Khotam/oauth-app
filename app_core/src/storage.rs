@@ -152,3 +152,14 @@ impl Storage {
         Ok(())
     }
 }
+
+pub trait ClientStorage {
+    fn get_client(&self, client_id: &str) -> Result<Option<Client>, String>;
+}
+
+// Implement the trait for our actual Storage struct
+impl ClientStorage for Storage {
+    fn get_client(&self, client_id: &str) -> Result<Option<Client>, String> {
+        Storage::get_client(client_id)
+    }
+}
