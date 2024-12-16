@@ -1,6 +1,7 @@
 use actix_web::{error::ErrorBadRequest, post, web, App, HttpRequest, HttpResponse, HttpServer};
 use reqwest::header::AUTHORIZATION;
 use resource_server::{TokenResponse, TokenStatus};
+mod sd_jwt;
 
 async fn validate_token(token: &str) -> Result<bool, String> {
     let client = reqwest::Client::new();
@@ -47,8 +48,11 @@ async fn resource(req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
         return Ok(HttpResponse::Unauthorized().body("invalid token"));
     }
 
+    let sd_jwt = sd_jwt::issue();
+    dbg!(&sd_jwt);
     return Ok(HttpResponse::Ok().json(web::Json(serde_json::json!({
         "ok": true,
+        "sd_jwt": sd_jwt
     }))));
 }
 
