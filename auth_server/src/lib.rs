@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use storage::Storage;
 mod storage;
@@ -44,14 +43,14 @@ pub enum TokenStatus {
 
 #[derive(Deserialize, Serialize)]
 pub struct IntrospectResponse {
-    pub expires: DateTime<Utc>,
+    pub expires: i64,
     pub scope: String,
     pub status: TokenStatus,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TokenResponse {
-    pub expires_in: i32,
+    pub expires_in: i64,
     pub access_token: String,
     pub token_type: String,
     pub scope: String,
@@ -65,14 +64,12 @@ pub struct Credentials {
 }
 
 pub fn is_valid_credentials(creds: &Credentials) -> Result<bool, String> {
-    let storage = Storage::get()?;
-    let client = storage.clients.get(&creds.client_id);
-
+    let client = Storage::get_client(&creds.client_id).map_err(|err| err)?;
     if let Some(client) = client {
         if let Some(client_secret) = &creds.client_secret {
             Ok(client.client_secret == *client_secret)
         } else {
-            Ok(false)
+            Ok(true)
         }
     } else {
         Ok(false)

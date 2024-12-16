@@ -5,13 +5,21 @@ use auth_server::{
 use chrono::{DateTime, Duration, Utc};
 use url::Url;
 mod storage;
-use storage::{AuthCode, Client, Profile, Storage, Token, User};
+use jsonwebtoken::{encode, EncodingKey, Header};
+use storage::{AuthCode, Storage, Token};
+mod jwt;
+use jwt::{Claims, JwtConfig};
+
+mod auth;
+use auth::AuthMiddleware;
+
+use std::future::ready;
 
 use actix_web::{
-    error::{ErrorBadRequest, ErrorInternalServerError},
+    error::{ErrorBadRequest, ErrorInternalServerError, ErrorUnauthorized},
     get,
     http::header::ContentType,
-    post, web, App, HttpResponse, HttpServer,
+    post, web, HttpResponse,
 };
 
 #[get("/authorize")]
@@ -23,8 +31,7 @@ async fn login(query: web::Query<LoginQueryParams>) -> Result<HttpResponse, acti
         scope,
     } = query.into_inner();
 
-    let storage = Storage::get().map_err(|e| ErrorInternalServerError(e))?;
-    let client = storage.clients.get(&client_id);
+    let client = Storage::get_client(&client_id).map_err(ErrorInternalServerError)?;
 
     match client {
         Some(cl) => Ok(HttpResponse::Ok()
@@ -58,18 +65,14 @@ async fn login_post(form: web::Form<LoginForm>) -> Result<HttpResponse, actix_we
         return Ok(HttpResponse::Unauthorized().body("Invalid credentials"));
     }
 
-    let mut storage = Storage::get().map_err(|e| ErrorInternalServerError(e))?;
-    let user = storage
-        .users
-        .values()
-        .find(|user| user.username == form.username && user.password == form.password);
+    let user = Storage::get_user_by_credentials(&form.username, &form.password);
 
     match user {
-        Some(_) => {
+        Ok(_) => {
             let auth_code = String::from("123");
             let user_id = "user1".to_string();
             let now: DateTime<Utc> = Utc::now();
-            let expires = now + Duration::minutes(10);
+            let expires = (now + Duration::minutes(10)).timestamp();
 
             let auth_code_data = AuthCode {
                 client_id: form.client_id,
@@ -78,7 +81,7 @@ async fn login_post(form: web::Form<LoginForm>) -> Result<HttpResponse, actix_we
                 scope: form.scope,
                 expires,
             };
-            storage.auth_codes.insert(auth_code.clone(), auth_code_data);
+            let _ = Storage::store_auth_code(&auth_code, auth_code_data);
 
             let mut redirect_url =
                 Url::parse(&form.redirect_uri).map_err(|err| ErrorInternalServerError(err))?;
@@ -91,13 +94,14 @@ async fn login_post(form: web::Form<LoginForm>) -> Result<HttpResponse, actix_we
                 .append_header(("Location", redirect_url.to_string()))
                 .finish())
         }
-        None => return Ok(HttpResponse::Unauthorized().body("Invalid credentials")),
+        Err(err) => return Ok(HttpResponse::Unauthorized().body(err)),
     }
 }
 
 #[post("/token")]
 async fn oauth_token(
     params: web::Json<OauthTokenParams>,
+    config: web::Data<JwtConfig>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let params = params.into_inner();
 
@@ -105,29 +109,41 @@ async fn oauth_token(
         return Ok(HttpResponse::BadRequest().body("Unsupported grant type"));
     }
 
-    let mut storage = Storage::get().map_err(|e| ErrorInternalServerError(e))?;
-
     let is_valid = is_valid_credentials(&Credentials {
-        client_id: params.client_id,
+        client_id: params.client_id.clone(),
         client_secret: Some(params.client_secret),
     })
-    .map_err(|e| ErrorBadRequest(e))?;
+    .map_err(|e| ErrorUnauthorized(e))?;
     if !is_valid {
         return Ok(HttpResponse::Unauthorized().body("Invalid credentials"));
     }
 
-    let auth_code = match storage.auth_codes.get(&params.auth_code).cloned() {
-        Some(ac) => ac, // Clone the data we need
-        None => return Ok(HttpResponse::BadRequest().json("Invalid auth code")),
+    let auth_code = match Storage::get_auth_code(&params.auth_code) {
+        Ok(ac) => ac,
+        Err(err) => return Ok(HttpResponse::Unauthorized().body(err)),
     };
 
-    let now = Utc::now();
+    let now = Utc::now().timestamp();
     if auth_code.expires < now || auth_code.redirect_uri != params.redirect_uri {
         return Ok(HttpResponse::Unauthorized().body("Invalid grant"));
     }
 
-    let expires = now + Duration::minutes(10);
-    let access_token = String::from("token");
+    let now = Utc::now();
+    let expires_in = 24 * 3600;
+    let expires = (now + Duration::seconds(expires_in)).timestamp();
+    let claims = Claims {
+        sub: params.client_id.clone(),
+        exp: expires,
+        iat: now.timestamp(),
+    };
+
+    let access_token = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(config.secret.as_bytes()),
+    )
+    .map_err(|_| ErrorUnauthorized("Token creation failed"))?;
+
     let token_data = Token {
         client_id: auth_code.client_id.clone(),
         user_id: auth_code.user_id.clone(),
@@ -136,12 +152,12 @@ async fn oauth_token(
         is_revoked: false,
     };
 
-    storage.tokens.insert(access_token.clone(), token_data);
-    // storage.auth_codes.remove(&params.auth_code);
+    let _ = Storage::store_token(&access_token, token_data);
+    // storage.auth_codes.remove(&params.auth_code); // revoke auth_code after getting token
     let response = TokenResponse {
         access_token,
         token_type: String::from("Bearer"),
-        expires_in: 3600,
+        expires_in,
         scope: auth_code.scope.clone(),
         is_revoked: false,
     };
@@ -151,28 +167,24 @@ async fn oauth_token(
 
 #[post("/revoke")]
 async fn revoke(params: web::Json<TokenParams>) -> Result<HttpResponse, actix_web::Error> {
-    let mut storage = Storage::get().map_err(|e| ErrorInternalServerError(e))?;
-
-    if let Some(token) = storage.tokens.get_mut(&params.access_token) {
-        token.is_revoked = true;
-        return Ok(HttpResponse::Ok().body("Revoked"));
+    let result = Storage::revoke_token(&params.access_token);
+    if result.is_ok() {
+        Ok(HttpResponse::Ok().body("Revoked token"))
+    } else {
+        Ok(HttpResponse::BadRequest().body("Invalid token"))
     }
-    Ok(HttpResponse::BadRequest().body("Invalid token"))
 }
 
 #[post("/introspect")]
 async fn introspect(params: web::Json<TokenParams>) -> Result<HttpResponse, actix_web::Error> {
-    let storage = Storage::get().map_err(|e| ErrorInternalServerError(e))?;
-
-    if let Some(token) = storage.tokens.get(&params.access_token) {
+    if let Ok(Some(token)) = Storage::get_token(&params.access_token) {
         let mut response = IntrospectResponse {
             status: TokenStatus::Active,
             scope: token.scope.clone(),
             expires: token.expires,
         };
 
-        let now = Utc::now();
-
+        let now = Utc::now().timestamp();
         if token.is_revoked {
             response.status = TokenStatus::Revoked;
         } else if token.expires < now {
@@ -185,46 +197,35 @@ async fn introspect(params: web::Json<TokenParams>) -> Result<HttpResponse, acti
 }
 
 #[actix_web::main]
-async fn main() -> Result<(), std::io::Error> {
+async fn main() -> std::io::Result<()> {
+    use actix_web::{App, HttpServer};
+
     let app_port = 4000;
     println!("Listening on port {}", app_port);
 
-    let storage = Storage::get();
-    match storage {
-        Ok(mut strg) => {
-            strg.clients.insert(
-                String::from("client1"),
-                Client {
-                    client_secret: String::from("client1_secret"),
-                    redirect_uris: vec![String::from("http://localhost:3000/callback")],
-                    name: String::from("Client App"),
-                    allowed_scopes: vec![String::from("email"), String::from("photos")],
-                },
-            );
+    let config = JwtConfig::from_env();
+    let config = web::Data::new(config);
 
-            strg.users.insert(
-                String::from("user1"),
-                User {
-                    username: String::from("username"),
-                    password: String::from("password"),
-                    profile: Profile {
-                        name: String::from("Khotam"),
-                        email: String::from("test@gmail.com"),
-                    },
-                },
-            );
-            ()
-        }
-        _ => (),
-    }
-
-    HttpServer::new(|| {
+    HttpServer::new(move || {
         App::new()
+            .app_data(config.clone())
             .service(login)
             .service(login_post)
             .service(oauth_token)
-            .service(revoke)
-            .service(introspect)
+            .service(
+                web::scope("")
+                    .wrap(actix_web_httpauth::middleware::HttpAuthentication::bearer(
+                        {
+                            let value = config.clone();
+                            move |req, _| {
+                                let config = value.clone();
+                                ready(AuthMiddleware::validate_token(req, &config.secret))
+                            }
+                        },
+                    ))
+                    .service(introspect)
+                    .service(revoke),
+            )
     })
     .bind(("127.0.0.1", app_port))?
     .run()

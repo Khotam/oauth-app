@@ -69,11 +69,6 @@ async fn callback(
     }
 }
 
-// #[post("/echo")]
-// async fn echo(req_body: String) -> impl Responder {
-//     HttpResponse::Ok().body(req_body)
-// }
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let app_port = 3000;

@@ -10,7 +10,7 @@ pub enum TokenStatus {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TokenResponse {
-    pub expires: DateTime<Utc>,
+    pub expires: i64,
     pub scope: String,
     pub status: TokenStatus,
 }

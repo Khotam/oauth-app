@@ -1,6 +1,5 @@
-use actix_web::{
-    error::ErrorBadRequest, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder,
-};
+use actix_web::{error::ErrorBadRequest, post, web, App, HttpRequest, HttpResponse, HttpServer};
+use reqwest::header::AUTHORIZATION;
 use resource_server::{TokenResponse, TokenStatus};
 
 async fn validate_token(token: &str) -> Result<bool, String> {
@@ -10,14 +9,16 @@ async fn validate_token(token: &str) -> Result<bool, String> {
         .json(&serde_json::json!({
           "access_token": token,
         }))
+        .header(AUTHORIZATION, format!("Bearer {token}"))
         .send()
         .await
         .map_err(|err| format!("Error in request /introspect: {}", err))?;
-
+    dbg!(&response);
     let token: TokenResponse = response
         .json()
         .await
         .map_err(|err| format!("Error parsing json /introspect: {}", err))?;
+    dbg!(&token);
 
     if token.status == TokenStatus::Active {
         return Ok(true);

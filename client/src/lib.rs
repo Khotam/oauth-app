@@ -23,7 +23,7 @@ pub struct CallbackQueryParams {
 
 #[derive(Deserialize, Debug)]
 pub struct TokenResponse {
-    pub expires_in: i32,
+    pub expires_in: i64,
     pub access_token: String,
     pub token_type: String,
     pub scope: String,
