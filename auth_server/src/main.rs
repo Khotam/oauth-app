@@ -4,6 +4,9 @@ use url::Url;
 mod auth_middleware;
 use auth_middleware::AuthMiddleware;
 
+mod params;
+use params::{LoginForm, LoginQueryParams, OauthTokenParams, TokenParams, TokenResponse};
+
 use std::future::ready;
 
 use actix_web::{
@@ -13,10 +16,7 @@ use actix_web::{
     post, web, HttpResponse,
 };
 
-use app_core::auth_utils::{
-    is_valid_credentials, Credentials, IntrospectResponse, LoginForm, LoginQueryParams,
-    OauthTokenParams, TokenParams, TokenResponse, TokenStatus,
-};
+use app_core::auth_utils::{is_valid_credentials, Credentials, IntrospectResponse, TokenStatus};
 use app_core::jwt::{Claims, Jwt};
 use app_core::storage::{AuthCode, Storage, Token};
 
@@ -58,7 +58,8 @@ async fn login_post(form: web::Form<LoginForm>) -> Result<HttpResponse, actix_we
         client_id: form.client_id.clone(),
         client_secret: None,
     };
-    let is_valid = is_valid_credentials(&creds).map_err(|e| ErrorBadRequest(e))?;
+    let storage = Storage::default();
+    let is_valid = is_valid_credentials(&creds, &storage).map_err(|e| ErrorBadRequest(e))?;
     if !is_valid {
         return Ok(HttpResponse::Unauthorized().body("Invalid credentials"));
     }
@@ -105,11 +106,14 @@ async fn oauth_token(
     if params.grant_type != "authorization_code" {
         return Ok(HttpResponse::BadRequest().body("Unsupported grant type"));
     }
-
-    let is_valid = is_valid_credentials(&Credentials {
-        client_id: params.client_id.clone(),
-        client_secret: Some(params.client_secret),
-    })
+    let storage = Storage::default();
+    let is_valid = is_valid_credentials(
+        &Credentials {
+            client_id: params.client_id.clone(),
+            client_secret: Some(params.client_secret),
+        },
+        &storage,
+    )
     .map_err(|e| ErrorUnauthorized(e))?;
     if !is_valid {
         return Ok(HttpResponse::Unauthorized().body("Invalid credentials"));
