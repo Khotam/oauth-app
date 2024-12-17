@@ -45,7 +45,6 @@ mod tests {
     use super::*;
     use crate::storage;
 
-    // Test double for Storage
     struct MockStorage {
         clients: HashMap<String, storage::Client>,
         should_error: bool,
