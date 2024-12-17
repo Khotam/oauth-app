@@ -80,7 +80,7 @@ mod tests {
     impl ClientStorage for MockStorage {
         fn get_client(&self, client_id: &str) -> Result<Option<storage::Client>, StorageError> {
             if self.should_error {
-                return Err(StorageError::LockError);
+                return Err(StorageError::NotFound);
             }
             Ok(self.clients.get(client_id).cloned())
         }
