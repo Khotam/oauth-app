@@ -14,7 +14,7 @@ async fn validate_token(token: &str) -> Result<bool, String> {
         .send()
         .await
         .map_err(|err| format!("Error in request /introspect: {}", err))?;
-    dbg!(&response);
+
     let token: IntrospectResponse = response
         .json()
         .await
@@ -48,7 +48,7 @@ async fn resource(req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
     }
 
     let sd_jwt = sd_jwt::issue();
-    dbg!(&sd_jwt);
+
     return Ok(HttpResponse::Ok().json(web::Json(serde_json::json!({
         "ok": true,
         "sd_jwt": sd_jwt

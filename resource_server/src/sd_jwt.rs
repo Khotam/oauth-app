@@ -21,7 +21,5 @@ pub fn issue() -> String {
         )
         .unwrap();
 
-    dbg!(&sd_jwt);
-
     sd_jwt
 }
