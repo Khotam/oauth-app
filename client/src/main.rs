@@ -1,5 +1,7 @@
+use actix_web::error::ErrorInternalServerError;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use app_core::client_utils::{CallbackQueryParams, TokenResponse, CONFIG};
+use app_core::sd_jwt;
 use reqwest::header::AUTHORIZATION;
 
 use serde_json;
@@ -57,11 +59,40 @@ async fn callback(
         .await;
 
     match resp {
-        Ok(res) => Ok(HttpResponse::Ok().body(
-            res.text()
+        Ok(res) => {
+            let json: serde_json::Value = res
+                .json()
                 .await
-                .map_err(|e| actix_web::error::ErrorInternalServerError(e))?,
-        )),
+                .map_err(|err| ErrorInternalServerError(err))?;
+            let sd_jwt = json["sd_jwt"].as_str().unwrap_or_default();
+
+            let presentation = sd_jwt::create_presentation(sd_jwt.to_string());
+
+            let client = reqwest::Client::new();
+            let verifier_response = client
+                .post(format!("{}/presentation", CONFIG.verifier_server_url))
+                // .header(AUTHORIZATION, format!("Bearer {}", token_data.access_token))
+                .json(&serde_json::json!({
+                  "presentation": presentation,
+                }))
+                .send()
+                .await;
+
+            if verifier_response.is_err() {
+                return Ok(
+                    HttpResponse::Unauthorized().body(verifier_response.err().unwrap().to_string())
+                );
+            }
+
+            return Ok(HttpResponse::Unauthorized().body(
+                verifier_response
+                    .ok()
+                    .unwrap()
+                    .text()
+                    .await
+                    .map_err(|e| actix_web::error::ErrorInternalServerError(e))?,
+            ));
+        }
         Err(e) => {
             println!("Error: {e}");
             Ok(HttpResponse::Unauthorized().body(e.to_string()))

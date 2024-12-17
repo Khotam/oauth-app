@@ -6,6 +6,7 @@ pub struct Config {
     pub redirect_uri: &'static str,
     pub auth_server_url: &'static str,
     pub resource_server_url: &'static str,
+    pub verifier_server_url: &'static str,
 }
 
 pub static CONFIG: Config = Config {
@@ -14,6 +15,7 @@ pub static CONFIG: Config = Config {
     redirect_uri: "http://localhost:3000/callback",
     auth_server_url: "http://localhost:4000",
     resource_server_url: "http://localhost:5000",
+    verifier_server_url: "http://localhost:6000",
 };
 
 #[derive(Deserialize, Debug)]
