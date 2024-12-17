@@ -3,7 +3,22 @@ use app_core::auth_utils::{IntrospectResponse, TokenStatus};
 use reqwest::header::AUTHORIZATION;
 mod sd_jwt;
 
-async fn validate_token(token: &str) -> Result<bool, String> {
+#[derive(Debug)]
+enum RequestError {
+    NetworkErr(String),
+    ParsingErr(String),
+}
+
+impl std::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestError::NetworkErr(msg) => write!(f, "Network error: {}", msg),
+            RequestError::ParsingErr(msg) => write!(f, "JSON parsing error: {}", msg),
+        }
+    }
+}
+
+async fn validate_token(token: &str) -> Result<bool, RequestError> {
     let client = reqwest::Client::new();
     let response = client
         .post("http://localhost:4000/introspect")
@@ -13,12 +28,12 @@ async fn validate_token(token: &str) -> Result<bool, String> {
         .header(AUTHORIZATION, format!("Bearer {token}"))
         .send()
         .await
-        .map_err(|err| format!("Error in request /introspect: {}", err))?;
+        .map_err(|err| RequestError::NetworkErr(format!("/introspect - {}", err)))?;
 
     let token: IntrospectResponse = response
         .json()
         .await
-        .map_err(|err| format!("Error parsing json /introspect: {}", err))?;
+        .map_err(|err| RequestError::ParsingErr(format!("/introspect - {}", err)))?;
 
     if token.status == TokenStatus::Active {
         return Ok(true);
