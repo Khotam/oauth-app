@@ -1,4 +1,5 @@
 use actix_web::{post, web, App, HttpResponse, HttpServer};
+use app_core::sd_jwt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -13,8 +14,11 @@ async fn presentation(
 ) -> Result<HttpResponse, actix_web::Error> {
     let presentation = params.presentation.clone();
 
+    let verified_claims = sd_jwt::verify_vp(presentation.clone());
+
     Ok(HttpResponse::Ok().json(json!({
-        "presentation": presentation
+        "presentation": presentation,
+        "verified_claims": verified_claims
     })))
 }
 

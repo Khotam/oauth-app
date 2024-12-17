@@ -1,7 +1,7 @@
 use actix_web::{error::ErrorBadRequest, post, web, App, HttpRequest, HttpResponse, HttpServer};
 use app_core::auth_utils::{IntrospectResponse, TokenStatus};
+use app_core::sd_jwt;
 use reqwest::header::AUTHORIZATION;
-mod sd_jwt;
 
 #[derive(Debug)]
 enum RequestError {
@@ -62,7 +62,7 @@ async fn resource(req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
         return Ok(HttpResponse::Unauthorized().body("invalid token"));
     }
 
-    let sd_jwt = sd_jwt::issue();
+    let sd_jwt = sd_jwt::issue_vc();
 
     return Ok(HttpResponse::Ok().json(web::Json(serde_json::json!({
         "ok": true,
