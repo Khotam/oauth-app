@@ -93,7 +93,7 @@ async fn login_post(form: web::Form<LoginForm>) -> Result<HttpResponse, actix_we
                 .append_header(("Location", redirect_url.to_string()))
                 .finish())
         }
-        Err(err) => return Ok(HttpResponse::Unauthorized().body(err)),
+        Err(err) => return Ok(HttpResponse::Unauthorized().body(err.to_string())),
     }
 }
 
@@ -121,7 +121,7 @@ async fn oauth_token(
 
     let auth_code = match Storage::get_auth_code(&params.auth_code) {
         Ok(ac) => ac,
-        Err(err) => return Ok(HttpResponse::Unauthorized().body(err)),
+        Err(err) => return Ok(HttpResponse::Unauthorized().body(err.to_string())),
     };
 
     let now = Utc::now().timestamp();

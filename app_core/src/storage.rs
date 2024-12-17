@@ -77,18 +77,32 @@ static STORAGE: Lazy<Mutex<Storage>> = Lazy::new(|| {
     Mutex::new(storage)
 });
 
+#[derive(Debug)]
+pub enum StorageError {
+    LockError,
+    NotFound,
+}
+
+impl std::fmt::Display for StorageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StorageError::LockError => write!(f, "Storage lock error",),
+            StorageError::NotFound => write!(f, "Not found",),
+        }
+    }
+}
+
 impl Storage {
-    pub fn get_client(client_id: &str) -> Result<Option<Client>, String> {
-        let storage = STORAGE
-            .lock()
-            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    pub fn get_client(client_id: &str) -> Result<Option<Client>, StorageError> {
+        let storage = STORAGE.lock().map_err(|_| StorageError::LockError)?;
         Ok(storage.clients.get(client_id).cloned())
     }
 
-    pub fn get_user_by_credentials(username: &str, password: &str) -> Result<Option<User>, String> {
-        let storage = STORAGE
-            .lock()
-            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    pub fn get_user_by_credentials(
+        username: &str,
+        password: &str,
+    ) -> Result<Option<User>, StorageError> {
+        let storage = STORAGE.lock().map_err(|_| StorageError::LockError)?;
         Ok(storage
             .users
             .values()
@@ -96,46 +110,36 @@ impl Storage {
             .cloned())
     }
 
-    pub fn store_auth_code(code: &str, auth_code: AuthCode) -> Result<(), String> {
-        let mut storage = STORAGE
-            .lock()
-            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    pub fn store_auth_code(code: &str, auth_code: AuthCode) -> Result<(), StorageError> {
+        let mut storage = STORAGE.lock().map_err(|_| StorageError::LockError)?;
         storage.auth_codes.insert(code.to_string(), auth_code);
         Ok(())
     }
 
-    pub fn get_auth_code(code: &str) -> Result<AuthCode, String> {
-        let storage = STORAGE
-            .lock()
-            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    pub fn get_auth_code(code: &str) -> Result<AuthCode, StorageError> {
+        let storage = STORAGE.lock().map_err(|_| StorageError::LockError)?;
 
         let auth_code = storage.auth_codes.get(code).cloned();
 
         match auth_code {
             Some(ac) => Ok(ac),
-            None => Err("not found".to_string()),
+            None => Err(StorageError::NotFound),
         }
     }
 
-    pub fn store_token(access_token: &str, token: Token) -> Result<(), String> {
-        let mut storage = STORAGE
-            .lock()
-            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    pub fn store_token(access_token: &str, token: Token) -> Result<(), StorageError> {
+        let mut storage = STORAGE.lock().map_err(|_| StorageError::LockError)?;
         storage.tokens.insert(access_token.to_string(), token);
         Ok(())
     }
 
-    pub fn get_token(access_token: &str) -> Result<Option<Token>, String> {
-        let storage = STORAGE
-            .lock()
-            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    pub fn get_token(access_token: &str) -> Result<Option<Token>, StorageError> {
+        let storage = STORAGE.lock().map_err(|_| StorageError::LockError)?;
         Ok(storage.tokens.get(access_token).cloned())
     }
 
-    pub fn revoke_token(access_token: &str) -> Result<bool, String> {
-        let mut storage = STORAGE
-            .lock()
-            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    pub fn revoke_token(access_token: &str) -> Result<bool, StorageError> {
+        let mut storage = STORAGE.lock().map_err(|_| StorageError::LockError)?;
         if let Some(token) = storage.tokens.get_mut(access_token) {
             token.is_revoked = true;
             Ok(true)
@@ -144,21 +148,19 @@ impl Storage {
         }
     }
 
-    pub fn print_debug_state() -> Result<(), String> {
-        let storage = STORAGE
-            .lock()
-            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    pub fn print_debug_state() -> Result<(), StorageError> {
+        let storage = STORAGE.lock().map_err(|_| StorageError::LockError)?;
         println!("Current storage state: {:#?}", storage);
         Ok(())
     }
 }
 
 pub trait ClientStorage {
-    fn get_client(&self, client_id: &str) -> Result<Option<Client>, String>;
+    fn get_client(&self, client_id: &str) -> Result<Option<Client>, StorageError>;
 }
 
 impl ClientStorage for Storage {
-    fn get_client(&self, client_id: &str) -> Result<Option<Client>, String> {
+    fn get_client(&self, client_id: &str) -> Result<Option<Client>, StorageError> {
         Storage::get_client(client_id)
     }
 }
