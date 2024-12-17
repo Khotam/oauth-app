@@ -66,35 +66,42 @@ async fn login_post(form: web::Form<LoginForm>) -> Result<HttpResponse, actix_we
 
     let user = Storage::get_user_by_credentials(&form.username, &form.password);
 
-    match user {
-        Ok(_) => {
-            let auth_code = String::from("123");
-            let user_id = "user1".to_string();
-            let now: DateTime<Utc> = Utc::now();
-            let expires = (now + Duration::minutes(10)).timestamp();
-
-            let auth_code_data = AuthCode {
-                client_id: form.client_id,
-                redirect_uri: form.redirect_uri.clone(),
-                user_id,
-                scope: form.scope,
-                expires,
-            };
-            let _ = Storage::store_auth_code(&auth_code, auth_code_data);
-
-            let mut redirect_url =
-                Url::parse(&form.redirect_uri).map_err(|err| ErrorInternalServerError(err))?;
-
-            redirect_url
-                .query_pairs_mut()
-                .append_pair("auth_code", &auth_code);
-
-            Ok(HttpResponse::Found()
-                .append_header(("Location", redirect_url.to_string()))
-                .finish())
+    let user = match user {
+        Err(err) => {
+            return Ok(HttpResponse::Unauthorized().body(err.to_string()));
         }
-        Err(err) => return Ok(HttpResponse::Unauthorized().body(err.to_string())),
+        Ok(user) => user,
+    };
+
+    if user.is_none() {
+        return Ok(HttpResponse::BadRequest().body("Invalid credentials"));
     }
+
+    let auth_code = String::from("123");
+    let user_id = "user1".to_string();
+    let now: DateTime<Utc> = Utc::now();
+    let expires = (now + Duration::minutes(10)).timestamp();
+
+    let auth_code_data = AuthCode {
+        client_id: form.client_id,
+        redirect_uri: form.redirect_uri.clone(),
+        user_id,
+        scope: form.scope,
+        expires,
+    };
+
+    let _ = Storage::store_auth_code(&auth_code, auth_code_data);
+
+    let mut redirect_url =
+        Url::parse(&form.redirect_uri).map_err(|err| ErrorInternalServerError(err))?;
+
+    redirect_url
+        .query_pairs_mut()
+        .append_pair("auth_code", &auth_code);
+
+    Ok(HttpResponse::Found()
+        .append_header(("Location", redirect_url.to_string()))
+        .finish())
 }
 
 #[post("/token")]
