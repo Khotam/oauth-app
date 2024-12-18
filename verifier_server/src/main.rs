@@ -1,5 +1,6 @@
-use actix_web::{post, web, App, HttpResponse, HttpServer};
+use actix_web::{error::ErrorInternalServerError, post, web, App, HttpResponse, HttpServer};
 use app_core::sd_jwt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -12,12 +13,23 @@ struct PresentationParams {
 async fn presentation(
     params: web::Json<PresentationParams>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let presentation = params.presentation.clone();
+    let resource_server_url = "http://localhost:5000";
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{}/public-key", resource_server_url))
+        .send()
+        .await
+        .map_err(|err| ErrorInternalServerError(err))?;
 
-    let verified_claims = sd_jwt::verify_vp(presentation.clone());
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|err| ErrorInternalServerError(err))?;
+    let public_key_pem = json["public_key_pem"].as_str().unwrap();
+    let verified_claims = sd_jwt::verify_vp(public_key_pem.to_string(), &params.presentation)?;
 
     Ok(HttpResponse::Ok().json(json!({
-        "presentation": presentation,
+        "presentation": params.presentation,
         "verified_claims": verified_claims
     })))
 }

@@ -1,7 +1,13 @@
+use actix_web::error::ErrorInternalServerError;
+use actix_web::get;
 use actix_web::{error::ErrorBadRequest, post, web, App, HttpRequest, HttpResponse, HttpServer};
 use app_core::auth_utils::{IntrospectResponse, TokenStatus};
+use app_core::pem_key_generator::{
+    encode_private_key_to_pem, generate_ecdsa_private_key, generate_ecdsa_public_key,
+};
 use app_core::sd_jwt;
 use reqwest::header::AUTHORIZATION;
+use serde_json::json;
 
 #[derive(Debug)]
 enum RequestError {
@@ -42,8 +48,23 @@ async fn validate_token(token: &str) -> Result<bool, RequestError> {
     return Ok(false);
 }
 
+#[get("/public-key")]
+async fn public_key(config: web::Data<AppState>) -> Result<HttpResponse, actix_web::Error> {
+    let public_key_pem = generate_ecdsa_public_key(config.private_key_bytes.clone());
+    match public_key_pem {
+        Err(err) => Ok(HttpResponse::InternalServerError()
+            .body(format!("public key generation failed: {}", err))),
+        Ok(pub_key_pem) => Ok(HttpResponse::Ok().json(json!({
+            "public_key_pem": pub_key_pem,
+        }))),
+    }
+}
+
 #[post("/resource")]
-async fn resource(req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
+async fn resource(
+    req: HttpRequest,
+    config: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
     let token = req
         .headers()
         .get("Authorization")
@@ -62,12 +83,19 @@ async fn resource(req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
         return Ok(HttpResponse::Unauthorized().body("invalid token"));
     }
 
-    let sd_jwt = sd_jwt::issue_vc();
+    let sd_jwt = sd_jwt::issue_vc(config.private_key_pem.clone())
+        .map_err(|err| ErrorInternalServerError(err))?;
 
     return Ok(HttpResponse::Ok().json(web::Json(serde_json::json!({
         "ok": true,
-        "sd_jwt": sd_jwt
+        "sd_jwt": sd_jwt,
     }))));
+}
+
+#[derive(Clone, Debug)]
+struct AppState {
+    private_key_bytes: Vec<u8>,
+    private_key_pem: String,
 }
 
 #[actix_web::main]
@@ -75,8 +103,25 @@ async fn main() -> std::io::Result<()> {
     let app_port = 5000;
     println!("Listening on port {}", app_port);
 
-    HttpServer::new(|| App::new().service(resource))
-        .bind(("127.0.0.1", app_port))?
-        .run()
-        .await
+    let private_key_bytes: Vec<u8> = generate_ecdsa_private_key().unwrap_or_else(|err| {
+        println!("cannot generate private key: {}", err);
+        panic!("app failed to generate issuer private key");
+    });
+
+    let private_key_pem = encode_private_key_to_pem(&private_key_bytes);
+
+    let config = web::Data::new(AppState {
+        private_key_bytes,
+        private_key_pem,
+    });
+
+    HttpServer::new(move || {
+        App::new()
+            .app_data(config.clone())
+            .service(resource)
+            .service(public_key)
+    })
+    .bind(("127.0.0.1", app_port))?
+    .run()
+    .await
 }

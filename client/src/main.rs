@@ -65,7 +65,6 @@ async fn callback(
                 .await
                 .map_err(|err| ErrorInternalServerError(err))?;
             let sd_jwt = json["sd_jwt"].as_str().unwrap_or_default();
-
             let presentation = sd_jwt::create_vp(sd_jwt.to_string());
 
             let client = reqwest::Client::new();

@@ -207,12 +207,8 @@ async fn main() -> std::io::Result<()> {
     let app_port = 4000;
     println!("Listening on port {}", app_port);
 
-    let config = Jwt::from_env();
-    let config = web::Data::new(config);
-
     HttpServer::new(move || {
         App::new()
-            .app_data(config.clone())
             .service(login)
             .service(login_post)
             .service(oauth_token)
