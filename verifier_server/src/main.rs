@@ -13,20 +13,24 @@ struct PresentationParams {
 async fn presentation(
     params: web::Json<PresentationParams>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let resource_server_url = "http://localhost:5000";
+    let issuer_server_url = "http://localhost:5000";
     let client = reqwest::Client::new();
     let response = client
-        .get(format!("{}/public-key", resource_server_url))
+        .get(format!("{}/public-key", issuer_server_url))
         .send()
         .await
         .map_err(|err| ErrorInternalServerError(err))?;
+    // dbg!(&response);
 
     let json: serde_json::Value = response
         .json()
         .await
         .map_err(|err| ErrorInternalServerError(err))?;
-    let public_key_pem = json["public_key_pem"].as_str().unwrap();
-    let verified_claims = sd_jwt::verify_vp(public_key_pem.to_string(), &params.presentation)?;
+
+    let issuer_public_key_pem = json["public_key_pem"].as_str().unwrap();
+    // dbg!(&issuer_public_key_pem);
+    let verified_claims =
+        sd_jwt::verify_vp(issuer_public_key_pem.to_string(), &params.presentation)?;
 
     Ok(HttpResponse::Ok().json(json!({
         "presentation": params.presentation,

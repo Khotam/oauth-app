@@ -39,7 +39,10 @@ fn get_sample_aud() -> String {
     "abc".to_string()
 }
 
-pub fn issue_vc(private_key_pem: String) -> Result<String, Box<dyn Error>> {
+pub fn issue_vc(
+    issuer_private_key_pem: String,
+    holder_public_key_jwk: String,
+) -> Result<String, Box<dyn Error>> {
     const HOLDER_JWK_KEY_ED25519: &str = r#"{
                 "alg": "EdDSA",
                 "crv": "Ed25519",
@@ -48,10 +51,11 @@ pub fn issue_vc(private_key_pem: String) -> Result<String, Box<dyn Error>> {
                 "x": "24QLWXJ18wtbg3k_MDGhGM17Xh39UftuxbwJZzRLzkA"
             }"#;
 
-    let issuer_key = EncodingKey::from_ec_pem(private_key_pem.as_bytes()).unwrap_or_else(|e| {
-        println!("Error creating key: {}", e);
-        panic!("Failed to create key");
-    });
+    let issuer_key =
+        EncodingKey::from_ec_pem(issuer_private_key_pem.as_bytes()).unwrap_or_else(|e| {
+            println!("Error encoding key: {}", e);
+            panic!("Failed to encode key");
+        });
 
     let holder_key = serde_json::from_str(HOLDER_JWK_KEY_ED25519).unwrap();
 
@@ -68,9 +72,16 @@ pub fn issue_vc(private_key_pem: String) -> Result<String, Box<dyn Error>> {
     Ok(sd_jwt)
 }
 
-pub fn create_vp(sd_jwt: String) -> String {
+pub fn create_vp(
+    private_key_pem: &str,
+    sd_jwt: String,
+) -> Result<String, Box<dyn std::error::Error>> {
     const HOLDER_KEY_ED25519: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIOeIDnHHMoPCUTiq206gR+FdCdNtc31SzF1nKX31hvhd\n-----END PRIVATE KEY-----";
-    let private_holder_key = EncodingKey::from_ed_pem(HOLDER_KEY_ED25519.as_bytes()).unwrap();
+    let private_holder_key = EncodingKey::from_ed_pem(HOLDER_KEY_ED25519.as_bytes())
+        .unwrap_or_else(|err| {
+            println!("decode error: {}", err);
+            panic!("decode");
+        });
 
     let mut holder = SDJWTHolder::new(sd_jwt, SDJWTSerializationFormat::Compact).unwrap();
     let claims_to_disclose = get_user_claims().as_object().unwrap().clone();
@@ -84,17 +95,17 @@ pub fn create_vp(sd_jwt: String) -> String {
         )
         .unwrap();
 
-    presentation
+    Ok(presentation)
 }
 
 pub fn verify_vp(
-    public_key_pem: String,
+    issuer_public_key_pem: String,
     presentation: &str,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
     let verified_claims = SDJWTVerifier::new(
         presentation.to_string(),
         Box::new(move |_, _| {
-            DecodingKey::from_ec_pem(public_key_pem.as_bytes()).unwrap_or_else(|err| {
+            DecodingKey::from_ec_pem(issuer_public_key_pem.as_bytes()).unwrap_or_else(|err| {
                 println!("decode error: {}", err);
                 panic!("decode");
             })
@@ -103,7 +114,10 @@ pub fn verify_vp(
         Some(get_sample_nonce()),
         SDJWTSerializationFormat::Compact,
     )
-    .unwrap()
+    .unwrap_or_else(|err| {
+        println!("err: {}", err);
+        panic!("err");
+    })
     .verified_claims;
 
     Ok(verified_claims)

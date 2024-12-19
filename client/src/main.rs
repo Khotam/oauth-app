@@ -1,10 +1,11 @@
 use actix_web::error::ErrorInternalServerError;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use app_core::client_utils::{CallbackQueryParams, TokenResponse, CONFIG};
-use app_core::sd_jwt;
+use app_core::ed25519_key_generator::generate_ed25519_public_key;
+use app_core::{ed25519_key_generator, sd_jwt};
 use reqwest::header::AUTHORIZATION;
 
-use serde_json;
+use serde_json::{self, json};
 
 #[get("/")]
 async fn index() -> impl Responder {
@@ -23,6 +24,7 @@ async fn index() -> impl Responder {
 #[get("/callback")]
 async fn callback(
     query: web::Query<CallbackQueryParams>,
+    config: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let auth_code = &query.auth_code;
 
@@ -65,7 +67,8 @@ async fn callback(
                 .await
                 .map_err(|err| ErrorInternalServerError(err))?;
             let sd_jwt = json["sd_jwt"].as_str().unwrap_or_default();
-            let presentation = sd_jwt::create_vp(sd_jwt.to_string());
+            let presentation = sd_jwt::create_vp(&config.private_key_pem, sd_jwt.to_string())
+                .map_err(|err| ErrorInternalServerError(err))?;
 
             let client = reqwest::Client::new();
             let verifier_response = client
@@ -99,13 +102,50 @@ async fn callback(
     }
 }
 
+#[get("/public-key")]
+async fn public_key(config: web::Data<AppState>) -> Result<HttpResponse, actix_web::Error> {
+    let public_key_jwk = generate_ed25519_public_key(config.private_key_bytes.clone());
+    match public_key_jwk {
+        Err(err) => Ok(HttpResponse::InternalServerError()
+            .body(format!("public key generation failed: {}", err))),
+        Ok(pub_key_jwk) => Ok(HttpResponse::Ok().json(json!({
+            "public_key_jwk": pub_key_jwk,
+        }))),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AppState {
+    private_key_bytes: Vec<u8>,
+    private_key_pem: String,
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let app_port = 3000;
     println!("Listening on port {}", &app_port);
 
-    HttpServer::new(|| App::new().service(index).service(callback))
-        .bind(("127.0.0.1", app_port))?
-        .run()
-        .await
+    let private_key_bytes =
+        ed25519_key_generator::generate_ed25519_private_key().unwrap_or_else(|err| {
+            println!("Failed to create private key: {}", err);
+            panic!("Failed to create private key");
+        });
+
+    let private_key_pem = ed25519_key_generator::encode_ed25519_key_to_pem(&private_key_bytes);
+
+    let config = web::Data::new(AppState {
+        private_key_bytes,
+        private_key_pem,
+    });
+
+    HttpServer::new(move || {
+        App::new()
+            .app_data(config.clone())
+            .service(index)
+            .service(callback)
+            .service(public_key)
+    })
+    .bind(("127.0.0.1", app_port))?
+    .run()
+    .await
 }

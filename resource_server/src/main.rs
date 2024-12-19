@@ -2,7 +2,7 @@ use actix_web::error::ErrorInternalServerError;
 use actix_web::get;
 use actix_web::{error::ErrorBadRequest, post, web, App, HttpRequest, HttpResponse, HttpServer};
 use app_core::auth_utils::{IntrospectResponse, TokenStatus};
-use app_core::pem_key_generator::{
+use app_core::edcsa_key_generator::{
     encode_private_key_to_pem, generate_ecdsa_private_key, generate_ecdsa_public_key,
 };
 use app_core::sd_jwt;
@@ -65,6 +65,7 @@ async fn resource(
     req: HttpRequest,
     config: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
+    let client = reqwest::Client::new();
     let token = req
         .headers()
         .get("Authorization")
@@ -83,8 +84,25 @@ async fn resource(
         return Ok(HttpResponse::Unauthorized().body("invalid token"));
     }
 
-    let sd_jwt = sd_jwt::issue_vc(config.private_key_pem.clone())
+    let holder_server_url = "http://localhost:3000";
+    let response = client
+        .get(format!("{}/public-key", holder_server_url))
+        .send()
+        .await
         .map_err(|err| ErrorInternalServerError(err))?;
+    // dbg!(&response);
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|err| ErrorInternalServerError(err))?;
+
+    let holder_public_key_jwk = json["public_key_jwk"].as_str().unwrap_or_default();
+    // dbg!(&holder_public_key_jwk);
+    let sd_jwt = sd_jwt::issue_vc(
+        config.private_key_pem.clone(),
+        holder_public_key_jwk.to_string(),
+    )
+    .map_err(|err| ErrorInternalServerError(err))?;
 
     return Ok(HttpResponse::Ok().json(web::Json(serde_json::json!({
         "ok": true,

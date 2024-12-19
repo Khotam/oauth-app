@@ -13,3 +13,4 @@ sd-jwt-rs = "0.7.1"
 ring = "0.17"
 base64 = "0.21"
 yasna = "0.5"
+uuid = { version = "1.6", features = ["v4"] }
