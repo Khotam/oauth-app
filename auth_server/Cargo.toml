@@ -1,0 +1,17 @@
+[package]
+name = "auth_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4"
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+url = "2.5"
+serde_json = "1.0"
+actix-web-httpauth = "0.8"
+
+app_core = { path = "../app_core" }
+
+
+

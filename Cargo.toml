@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+    "app_core",
+    "auth_server",
+    "resource_server",
+    "client",
+    "verifier_server"]
+

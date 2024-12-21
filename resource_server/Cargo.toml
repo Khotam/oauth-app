@@ -1,0 +1,16 @@
+[package]
+name = "resource_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4"
+reqwest = { version = "0.11", features = ["json"] }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+jsonwebtoken = "9.3.0"
+sd-jwt-rs = "0.7.1"
+
+app_core = { path = "../app_core" }
+
